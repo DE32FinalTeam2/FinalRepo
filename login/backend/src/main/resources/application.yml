@@ -1,0 +1,70 @@
+spring:
+  profiles:
+    active: local
+    include: oauth
+
+  security:
+    oauth2:
+      client:
+        provider: #네이버, 카카오는 따로 provider를 작성해야한다.
+          kakao:
+            authorizationUri: https://kauth.kakao.com/oauth/authorize
+            tokenUri: https://kauth.kakao.com/oauth/token
+            userInfoUri: https://kapi.kakao.com/v2/user/me
+            userNameAttribute: id
+
+        registration:
+          kakao:
+            client-id: ${KAKAO_CLIENT_ID}
+            client-secret: ${KAKAO_CLIENT_SECRET}
+            redirect-uri: http://localhost:3000/auth/login/kakao
+            # http://localhost:8972/oauth2/callback
+            authorization-grant-type: authorization_code
+            scope:
+              - profile_nickname
+              - profile_image
+              - account_email
+            client-name: Kakao
+            client-authentication-method: POST
+
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=MySQL
+    driverClassName: org.h2.Driver
+    username: sa
+    password: password
+    hikari:
+      pool-name: H2 Pool
+      maximum-pool-size: 10
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  sql:
+    init:
+      platform: h2
+  jpa:
+    hibernate:
+      ddl-auto: update
+    database-platform: org.hibernate.dialect.H2Dialect
+    show-sql: true
+    generate-ddl: true
+
+
+
+
+# 토큰 관련 secret Key 및 RedirectUri 설정
+app:
+  auth:
+    tokenSecret: +xLpMsgPBI9qtsbIT8UZcr2zl1C2YbNc741x1r8PztHkwa3cVeQhsDd+m8nponeMHtG8sBmA9eBchsJX62rrlw==
+    tokenExpiry: 1800000
+    refreshTokenExpiry: 604800000
+  oauth2:
+    authorizedRedirectUris:
+      - http://localhost:3000/oauth/redirect
+
+logging:
+  level:
+    org.springframework.security: DEBUG
+
+server:
+  port: 8972  # 백엔드 서버 포트
