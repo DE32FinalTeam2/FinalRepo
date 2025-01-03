@@ -1,73 +1,186 @@
 version: '3.8'
-
-networks:
-  airflow-network:
-    driver: bridge
-  spark-network:
-    driver: bridge
-
 services:
-  airflow:
+  link_crawler:
     build:
-      context: ./airflow
-      dockerfile: Dockerfile-airflow
-    ports:
-      - "8080:8080"
+      context: .
+      dockerfile: Dockerfile
+    #image: public.ecr.aws/u5b2p7i3/job_scanner/crawling:link_crawler
+    container_name: link_crawler
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: mysql+mysqlconnector://root:1234@43.201.40.223:3306/airflowdb
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False" # 기본 예제 DAG 로드 비활성화
+      - AWS_SHARED_CREDENTIALS_FILE=/code/.aws/credentials
+    restart: "no"
+    command: ["python", "/code/crawling/link_crawling.py"]
     volumes:
-      - ./airflow/dags:/usr/local/airflow/dags
-      - ./airflow/logs:/usr/local/airflow/logs
-      - ./airflow/plugins:/usr/local/airflow/plugins
-    entrypoint: >
-      bash -c "
-      /docker-entrypoint-initdb.d/init_airflow.sh &&
-      exec airflow webserver
+      - ./crawling:/code/crawling
+      - ./logs:/code/logs
+      - ~/.aws:/code/.aws:ro
+    shm_size: 4g  # /dev/shm 크기 설정
+    deploy:
+      resources:
+        limits:
+          memory: 2g  # 메모리 제한 설정 (예시)
+
+  post_crawler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    #image: public.ecr.aws/u5b2p7i3/job_scanner/crawling:post_crawler
+    container_name: post_crawler
+    environment:
+      - AWS_SHARED_CREDENTIALS_FILE=/code/.aws/credentials
+    restart: "no"
+    command: ["python", "/code/crawling/post_crawling.py"]
+    volumes:
+      - ./crawling:/code/crawling
+      - ./logs:/code/logs
+      - ~/.aws:/code/.aws:ro
+    shm_size: 4g  # /dev/shm 크기 설정
+    deploy:
+      resources:
+        limits:
+          memory: 2g  # 메모리 제한 설정 (예시)
+
+  text_crawler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    #image: public.ecr.aws/u5b2p7i3/job_scanner/crawling:text_crawler
+    container_name: text_crawler
+    environment:
+      - AWS_SHARED_CREDENTIALS_FILE=/code/.aws/credentials
+    restart: "no"
+    command: ["python", "/code/crawling/text_preprocess.py"]
+    volumes:
+      - /home/ubuntu/crawling/crawling:/code/crawling
+      - /home/ubuntu/crawling/logs:/code/logs
+      - ~/.aws:/code/.aws:ro
+    shm_size: 4g  # /dev/shm 크기 설정
+    deploy:
+      resources:
+        limits:
+          memory: 2g  # 메모리 제한 설정 (예시)
+
+  extract_crawler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    #image: public.ecr.aws/u5b2p7i3/job_scanner/crawling:extract_crawler
+    container_name: extract_crawler
+    environment:
+      - AWS_SHARED_CREDENTIALS_FILE=/code/.aws/credentials
+    restart: "no"
+    command: >
+      sh -c "
+      python /code/extract/ocr/imagetotext.py &&
+      python /code/extract/tech/text_processing/techextractimg.py &&
+      python /code/extract/tech/text_processing/techextracttext.py &&
+      python /code/extract/tech/rank_division/dayaggbyjob.py &&
+      python /code/extract/tech/rank_division/rank_history.py &&
+      python /code/extract/tech/rank_division/rank_count.py &&
+      python /code/extract/service/job_notice/noticedatainput.py &&
+      python /code/extract/service/tech_rank/daily_rank/daily_rank.py
       "
-    networks:
-      - airflow-network
+    volumes:
+      - /home/ubuntu/crawling/extract:/code/extract
+      - /home/ubuntu/crawling/logs:/code/logs
+      - ~/.aws:/code/.aws:ro
+    shm_size: 4g  # /dev/shm 크기 설정
+    deploy:
+      resources:
+        limits:
+          memory: 2g  # 메모리 제한 설정 (예시)
 
-  airflow-scheduler:
-    build:
-      context: ./airflow
-      dockerfile: Dockerfile-airflow
-    environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: mysql+mysqlconnector://root:1234@43.201.40.223:3306/airflowdb
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-    entrypoint: >
-      bash -c "
-      sleep 10 && 
-      exec airflow scheduler
-      "
-    depends_on:
-      - airflow
-    networks:
-      - airflow-network
-
-  spark-master:
-    build:
-      context: ./spark
-      dockerfile: Dockerfile-spark
-    ports:
-      - "7077:7077"
-      - "4040:4040"
-    environment:
-      SPARK_MODE: master
-    networks:
-      - spark-network
-
-  spark-worker:
-    build:
-      context: ./spark
-      dockerfile: Dockerfile-spark
-    environment:
-      SPARK_MODE: worker
-      SPARK_MASTER_URL: spark://spark-master:7077
-    depends_on:
-      - spark-master
-    networks:
-      - spark-network
-
+            #  jumpit_crawler:
+            #    build:
+            #      context: .
+            #      dockerfile: Dockerfile
+            #    container_name: jumpit_crawler
+            #    environment:
+            #      - AWS_SHARED_CREDENTIALS_FILE=/code/.aws/credentials
+            #    restart: "no"
+            #    command: ["python", "/code/crawling/jumpit_crawling.py"]
+            #    volumes:
+            #      - ./crawling:/code/crawling
+            #      - ./logs:/code/logs
+            #      - ~/.aws:/code/.aws:ro
+            #    shm_size: 4g  # /dev/shm 크기 설정
+            #    deploy:
+            #      resources:
+            #        limits:
+            #          memory: 2g  # 메모리 제한 설정 (예시)
+            #
+            #  wanted_crawler:
+            #    build:
+            #      context: .
+            #      dockerfile: Dockerfile
+            #    container_name: wanted_crawler
+            #    environment:
+            #      - AWS_SHARED_CREDENTIALS_FILE=/code/.aws/credentials
+            #    restart: "no"
+            #    command: ["python", "/code/crawling/wanted_crawling.py"]
+            #    volumes:
+            #      - ./crawling:/code/crawling
+            #      - ./logs:/code/logs
+            #      - ~/.aws:/code/.aws:ro
+            #    shm_size: 4g  # /dev/shm 크기 설정
+            #    deploy:
+            #      resources:
+            #        limits:
+            #          memory: 2g  # 메모리 제한 설정 (예시)
+            #
+            #  incruit_crawler:
+            #    build:
+            #      context: .
+            #      dockerfile: Dockerfile
+            #    container_name: incruit_crawler
+            #    environment:
+            #      - AWS_SHARED_CREDENTIALS_FILE=/code/.aws/credentials
+            #    restart: "no"
+            #    command: ["python", "/code/crawling/incruit_crawling.py"]
+            #    volumes:
+            #      - ./crawling:/code/crawling
+            #      - ./logs:/code/logs
+            #      - ~/.aws:/code/.aws:ro
+            #    shm_size: 4g  # /dev/shm 크기 설정
+            #    deploy:
+            #      resources:
+            #        limits:
+            #          memory: 2g  # 메모리 제한 설정 (예시)
+            #
+            #  jobkorea_crawler:
+            #    build:
+            #      context: .
+            #      dockerfile: Dockerfile
+            #    container_name: jobkorea_crawler
+            #    environment:
+            #      - AWS_SHARED_CREDENTIALS_FILE=/code/.aws/credentials
+            #    restart: "no"
+            #    command: ["python", "/code/crawling/jobkorea_crawling.py"]
+            #    volumes:
+            #      - ./crawling:/code/crawling
+            #      - ./logs:/code/logs
+            #      - ~/.aws:/code/.aws:ro
+            #    shm_size: 4g  # /dev/shm 크기 설정
+            #    deploy:
+            #      resources:
+            #        limits:
+            #          memory: 2g  # 메모리 제한 설정 (예시)
+            #
+            #  saramin_crawler:
+            #    build:
+            #      context: .
+            #      dockerfile: Dockerfile
+            #    container_name: saramin_crawler
+            #    environment:
+            #      - AWS_SHARED_CREDENTIALS_FILE=/code/.aws/credentials
+            #    restart: "no"
+            #    command: ["python", "/code/crawling/saramin_crawling.py"]
+            #    volumes:
+            #      - ./crawling:/code/crawling
+            #      - ./logs:/code/logs
+            #      - ~/.aws:/code/.aws:ro
+            #    shm_size: 4g  # /dev/shm 크기 설정
+            #    deploy:
+            #      resources:
+            #        limits:
+            #          memory: 2g  # 메모리 제한 설정 (예시)
