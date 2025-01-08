@@ -8,13 +8,13 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from urllib.parse import urlparse, parse_qs
+from webdriver_manager.chrome import ChromeDriverManager
 import re
 
-output_folder = "links"
+output_folder = "jumpit"
 today = datetime.today().strftime('%Y%m%d')
 log_file_name = os.path.join(output_folder, f"{today}.log")
 
@@ -93,9 +93,6 @@ def extract_site_name(url):
     domain = parsed_url.hostname
     return domain.split('.')[0] if domain else None
 
-def ensure_directories():
-    os.makedirs("links", exist_ok=True)
-
 def calculate_deadline_from_dday(d_day):
     today = datetime.now().date()
     deadline = today + timedelta(days=d_day)
@@ -109,7 +106,8 @@ def update_log_file(url, crawl_time):
     
     for line in lines:
         columns = line.strip().split(',')
-        if columns[0] == url:
+        if columns[1] == url:
+            job_title = columns[0].strip()  # 로그 파일에서 job_title 추출
             columns[2] = "done"
             columns[3] = crawl_time
             updated_line = ','.join(columns)
@@ -120,10 +118,9 @@ def update_log_file(url, crawl_time):
     with open(log_file_name, 'w', encoding='utf-8') as file:
         file.writelines(updated_lines)
 
-ensure_directories()
 
 bucket_name = 't2jt'
-today_file_key = f"job/DE/sources/jumpit/links/{today}.txt"
+today_file_key = f"job/DE/sources/jumpit/links/{today}.txt"  # 기본값은 DE로 설정
 
 links_with_ddays = read_links_and_ddays_from_s3(bucket_name, today_file_key)
 
@@ -144,52 +141,68 @@ driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), opti
 with open(log_file_name, 'r', encoding='utf-8') as file:
     lines = file.readlines()
 
-    removed_links = []
+removed_links = []
 
-    for line in lines[1:]:
-        columns = line.strip().split(',')
-        url = columns[0]
-        notice_status = columns[1]
-        work_status = columns[2]
-        done_time = columns[3]
-        d_day = columns[4]  # D-day 값을 가져옴
-        
-        # D-day 값이 숫자인 경우 deadline 계산
-        try:
-            d_day_int = int(d_day)
-            deadline = calculate_deadline_from_dday(d_day_int)
-        except ValueError:
-            deadline = None  # D-day 값이 유효하지 않으면 deadline은 None
-        
-        if notice_status == "deleted":
-            removed_links.append(url)
-        elif notice_status == "update" and work_status == "null":
-            print(f"Starting crawl for {url}")
-            crawl_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+for line in lines[1:]:  # 헤더는 제외
+    columns = line.strip().split(',')
+    job_title = columns[0].strip()  # 로그 파일에서 job_title 추출
+  # 로그에서 직무명을 추출
+    url = columns[1]
+    notice_status = columns[2]
+    work_status = columns[3]
+    done_time = columns[4]
+    d_day = columns[5]
 
-            # Open the URL and perform web scraping directly
-            try:
+    try:
+        with connection.cursor() as cursor:
+            if notice_status == "deleted" and work_status == "done":
+                print(f"URL {url} is marked as deleted. Checking if it exists in the database.")
+                
+                # Check if URL exists in DB
+                cursor.execute("SELECT 1 FROM jumpit WHERE org_url = %s", (url,))
+                result = cursor.fetchone()
+                if not result:
+                    print(f"URL {url} not found in DB, skipping removed_time update.")
+                    continue
+
+                # Update removed_time without checking done_time
+                removed_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                update_time_query = """
+                UPDATE jumpit
+                SET removed_time = %s
+                WHERE org_url = %s
+                """
+                cursor.execute(update_time_query, (removed_time, url))
+                
+                # Check if update was successful
+                if cursor.rowcount == 0:
+                    print(f"No rows updated for URL: {url}")
+                else:
+                    print(f"Removed time updated for URL: {url}")
+                connection.commit()
+
+            elif notice_status == "update" and work_status == "null":
+                print(f"Starting crawl for {url}")
+                crawl_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
                 driver.get(url)
-                time.sleep(3)  # Wait for the page to load
-
-                # Extract job content
+                time.sleep(3)
+                
                 job_content_text = None
                 try:
                     job_content_section = WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".sc-10492dab-3.hiVlDL"))  # Adjust this selector to match the correct element
+                        EC.presence_of_element_located((By.CSS_SELECTOR, ".sc-10492dab-3.hiVlDL"))
                     )
                     job_content_text = job_content_section.text
                 except Exception:
                     print(f"Failed to extract job content from {url}")
                 
-                # If content is found, save to file and upload to S3
                 if job_content_text:
                     text_path = os.path.join("texts", f"{uuid.uuid4()}.txt")
                     with open(text_path, "w", encoding="utf-8") as f:
                         f.write(job_content_text)
-                    s3_text_url = upload_to_s3(text_path, bucket_name, f"job/DE/sources/{extract_site_name(url)}/txt/{uuid.uuid4()}.txt")
+                    s3_text_url = upload_to_s3(text_path, bucket_name, f"job/{job_title}/sources/{extract_site_name(url)}/txt/{uuid.uuid4()}.txt")
                 
-                # Extract additional info (like company name, post title)
                 company_name = None
                 post_title = None
                 try:
@@ -205,14 +218,17 @@ with open(log_file_name, 'r', encoding='utf-8') as file:
                 except Exception:
                     pass
 
-                # Determine due type
-                due_type = '상시채용' if not deadline else '날짜'
-                due_date = deadline if deadline else None
+                if d_day:  # d_day 값이 존재하는 경우
+                    deadline = calculate_deadline_from_dday(int(d_day))
+                    due_type = '날짜'
+                    due_date = deadline
+                else:  # d_day 값이 없으면 '상시채용'
+                    due_type = '상시채용'
+                    due_date = None
 
-                # Prepare data for DB insertion
                 data = {
                     'site': extract_site_name(url),
-                    'job_title': '데이터 엔지니어',
+                    'job_title': job_title,  # 동적으로 추출된 job_title
                     'due_type': due_type,
                     'due_date': due_date,
                     'company': company_name,
@@ -220,19 +236,15 @@ with open(log_file_name, 'r', encoding='utf-8') as file:
                     'post_title': post_title,
                     'org_url': url,
                     's3_text_url': s3_text_url,
-                    's3_image_url': None,
-                    'create_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'update_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'update_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
 
-                insert_into_db(data, connection)  # Insert the data into the DB
-                update_log_file(url, crawl_time)  # Update log file
+                insert_into_db(data, connection)
+                update_log_file(url, crawl_time)
 
-            except Exception as e:
-                print(f"Error processing {url}: {e}")
+    except Exception as e:
+        print(f"Error processing {url}: {e}")
 
-    if removed_links:
-        update_removed_links_in_db(removed_links, connection)  # Update removed links in DB
-
-driver.quit()
 connection.close()
+driver.quit()
