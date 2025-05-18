@@ -46,7 +46,7 @@ function KakaoLogin() {
 
     window.Kakao.Auth.login({
       success: (authObj) => {
-        const accessToken = authObj.access_token;  // 리프레시 토큰 제거
+        const accessToken = authObj.access_token; 
 
         // 액세스 토큰을 쿠키에 저장
         setCookie('access_token', accessToken);
