@@ -17,8 +17,6 @@ import java.util.stream.Collectors;
 
 @Service
 public class UserService {
-    @Autowired
-    private AuthRepository authRepository;
 
     @Autowired
     private UserRepository userRepository;
@@ -32,151 +30,61 @@ public class UserService {
     @Autowired
     private TechStackRepository techStackRepository;
 
+    @Autowired
+    private TechStackBookmarkRepository techStackBookmarkRepository;
+
     private final RestTemplate restTemplate = new RestTemplate();
+    private static final String KAKAO_API_URL = "https://kapi.kakao.com/v2/user/me";
 
-    private final TechStackBookmarkRepository techStackBookmarkRepository;
-
-
-    public UserService(UserRepository userRepository,
-                       TechStackBookmarkRepository techStackBookmarkRepository,
-                       NoticeBookmarkRepository noticeBookmarkRepository) {
-        this.userRepository = userRepository;
-        this.techStackBookmarkRepository = techStackBookmarkRepository;
-        this.noticeBookmarkRepository = noticeBookmarkRepository;
-    }
-
-    public User getUserInfoFromKakao(String accessToken) {
-        String url = "https://kapi.kakao.com/v2/user/me";
-        RestTemplate restTemplate = new RestTemplate();
+    // 카카오 API로 사용자 정보 요청
+    private User getUserInfoFromKakaoAPI(String accessToken) {
         try {
-            // 카카오 API로 사용자 정보 요청
-            String response = restTemplate.getForObject(url + "?access_token=" + accessToken, String.class);
-
-            // JSON 응답을 파싱하여 이메일, 이름 정보 추출
+            String response = restTemplate.getForObject(KAKAO_API_URL + "?access_token=" + accessToken, String.class);
             ObjectMapper objectMapper = new ObjectMapper();
             JsonNode jsonNode = objectMapper.readTree(response);
             String email = jsonNode.path("kakao_account").path("email").asText();
-            String name = jsonNode.path("properties").path("nickname").asText();
-
-            // 사용자 정보 반환
             return userRepository.findUserByEmail(email); // 이메일로 사용자 검색
         } catch (Exception e) {
-            // 오류 처리
             throw new RuntimeException("카카오 사용자 정보 요청 실패", e);
         }
     }
 
     // 카카오로부터 받은 정보로 새 사용자 생성
     public User createUserFromKakao(String accessToken) {
-        String url = "https://kapi.kakao.com/v2/user/me";
-        RestTemplate restTemplate = new RestTemplate();
-        try {
-            // 카카오 API로 사용자 정보 요청
-            String response = restTemplate.getForObject(url + "?access_token=" + accessToken, String.class);
-
-            // JSON 응답을 파싱하여 이메일, 이름 정보 추출
-            ObjectMapper objectMapper = new ObjectMapper();
-            JsonNode jsonNode = objectMapper.readTree(response);
-            String email = jsonNode.path("kakao_account").path("email").asText();
-            String name = jsonNode.path("properties").path("nickname").asText();
-
-            // 새 사용자 객체 생성
-            User user = new User();
-            user.setEmail(email);
+        User user = getUserInfoFromKakaoAPI(accessToken);
+        if (user == null) {
+            user = new User();
+            String name = getNameFromKakaoAPI(accessToken);
+            user.setEmail(user.getEmail());
             user.setName(name);
             user.setOauthProvider("kakao");
-
-            return userRepository.save(user);  // 새 사용자 저장
-        } catch (Exception e) {
-            throw new RuntimeException("카카오 사용자 정보 요청 실패", e);
+            return userRepository.save(user);
         }
+        return user;
     }
 
-    // 기존 사용자 정보 갱신
-    public void updateUserFromKakao(User user, String accessToken) {
-        String url = "https://kapi.kakao.com/v2/user/me";
-        RestTemplate restTemplate = new RestTemplate();
+    // 카카오 API에서 사용자 이름 조회
+    private String getNameFromKakaoAPI(String accessToken) {
         try {
-            // 카카오 API로 사용자 정보 요청
-            String response = restTemplate.getForObject(url + "?access_token=" + accessToken, String.class);
-
-            // JSON 응답을 파싱하여 이메일, 이름 정보 추출
+            String response = restTemplate.getForObject(KAKAO_API_URL + "?access_token=" + accessToken, String.class);
             ObjectMapper objectMapper = new ObjectMapper();
             JsonNode jsonNode = objectMapper.readTree(response);
-            String name = jsonNode.path("properties").path("nickname").asText();
-
-            // 사용자 정보 갱신
-            user.setName(name);
-            userRepository.save(user);  // 갱신된 사용자 저장
+            return jsonNode.path("properties").path("nickname").asText();
         } catch (Exception e) {
             throw new RuntimeException("카카오 사용자 정보 요청 실패", e);
         }
     }
-
-    // 리프레시 토큰 저장
-    public void saveAuthToken(User user, String refreshToken) {
-        Auth auth = authRepository.findByUserId(user.getId());
-
-        if (auth == null) {
-            // 새로 저장
-            auth = new Auth();
-            auth.setUser(user);
-            auth.setRefreshToken(refreshToken);
-            authRepository.save(auth);
-        } else {
-            // 기존 리프레시 토큰 갱신
-            auth.setRefreshToken(refreshToken);
-            authRepository.save(auth);
-        }
-
-    }
-
 
     // 액세스 토큰을 사용하여 사용자 정보 조회
     public User getUserInfoFromAccessToken(String accessToken) {
-        String url = "https://kapi.kakao.com/v2/user/me";
-        try {
-            // 카카오 API로 사용자 정보 요청
-            String response = restTemplate.getForObject(url + "?access_token=" + accessToken, String.class);
-
-            // JSON 응답을 파싱하여 사용자 정보 추출
-            ObjectMapper objectMapper = new ObjectMapper();
-            JsonNode jsonNode = objectMapper.readTree(response);
-            String email = jsonNode.path("kakao_account").path("email").asText();
-
-            // 사용자 정보 반환
-            return userRepository.findUserByEmail(email); // 이메일로 사용자 검색
-        } catch (Exception e) {
-            throw new RuntimeException("액세스 토큰으로 사용자 정보 요청 실패", e);
-        }
+        return getUserInfoFromKakaoAPI(accessToken); // 액세스 토큰을 이용해 카카오 API에서 사용자 정보를 가져옴
     }
 
-    // 리프레시 토큰으로 액세스 토큰을 갱신
-    public String refreshAccessToken(String refreshToken) {
-        String url = "https://kauth.kakao.com/oauth/token";
-        try {
-            // 리프레시 토큰을 사용하여 새로운 액세스 토큰을 발급
-            String response = restTemplate.postForObject(url,
-                    "grant_type=refresh_token&refresh_token=" + refreshToken + "&client_id=YOUR_APP_KEY", String.class);
-
-            // JSON 응답에서 액세스 토큰 추출
-            ObjectMapper objectMapper = new ObjectMapper();
-            JsonNode jsonNode = objectMapper.readTree(response);
-            return jsonNode.path("access_token").asText();
-        } catch (Exception e) {
-            throw new RuntimeException("리프레시 토큰을 통한 액세스 토큰 갱신 실패", e);
-        }
-    }
-
-    // 유저의 리프레시 토큰을 가져옴
-    public String getRefreshTokenByUserId(Long userId) {
-        Auth auth = authRepository.findByUserId(userId);
-        return auth != null ? auth.getRefreshToken() : null;
-    }
-
+    // 유저 프로필 정보 조회
     public UserDTO getUserProfile(String email) {
         User user = userRepository.findUserByEmail(email);  // 이메일로 사용자 조회
 
+        // 기술 스택 정보 조회
         List<TechStackDTO> techStackDTOs = techStackBookmarkRepository.findByUser(user).stream()
                 .map(bookmark -> new TechStackDTO(
                         bookmark.getTechStack().getTechName(),
@@ -186,6 +94,7 @@ public class UserService {
                         bookmark.getTechStack().getDocsLink()
                 )).collect(Collectors.toList());
 
+        // 공고 북마크 정보 조회
         List<NoticeDTO> noticeDTOs = noticeBookmarkRepository.findByUser(user).stream()
                 .map(bookmark -> new NoticeDTO(
                         bookmark.getNotice().getNotice_id(),
@@ -201,20 +110,21 @@ public class UserService {
                 ))
                 .collect(Collectors.toList());
 
+        // UserDTO 반환
         return new UserDTO(user.getEmail(), user.getName(), techStackDTOs, noticeDTOs);
     }
 
+    // 공고 북마크 추가 및 삭제
     public boolean addOrRemoveNoticeBookmark(String accessToken, Long noticeId) {
-        // 사용자 정보를 액세스 토큰으로 얻기
-        User user = getUserInfoFromAccessToken(accessToken); // 해당 메서드 필요
+        User user = getUserInfoFromAccessToken(accessToken); // 사용자 정보 가져오기
         if (user == null) {
-            throw new RuntimeException("User not found");
+            throw new RuntimeException("사용자를 찾을 수 없습니다.");
         }
 
         // 공고 조회
         Notice notice = noticeRepository.findById(noticeId).orElse(null);
         if (notice == null) {
-            throw new RuntimeException("Notice not found");
+            throw new RuntimeException("공고를 찾을 수 없습니다.");
         }
 
         // 북마크 존재 여부 확인
@@ -234,6 +144,7 @@ public class UserService {
         }
     }
 
+    // 기술 스택 북마크 추가 및 삭제
     public boolean addOrRemoveTechStackBookmark(String accessToken, String techName) {
         User user = getUserInfoFromAccessToken(accessToken); // 사용자 정보 가져오기
         if (user == null) {
@@ -262,6 +173,7 @@ public class UserService {
             return true;
         }
     }
+}
 
 }
 
