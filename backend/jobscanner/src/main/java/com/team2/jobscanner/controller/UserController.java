@@ -25,33 +25,26 @@ public class UserController {
     public ResponseEntity<?> getProfile(@RequestHeader(value = HttpHeaders.AUTHORIZATION) String authorization) {
         try {
             // Authorization 헤더에서 "Bearer " 부분을 제거하고 액세스 토큰만 추출
-            String accessToken = authorization.substring(7);  // "Bearer "가 7글자이므로 이를 제외한 부분이 토큰입니다.
-
-            // 액세스 토큰을 해석하여 사용자 정보를 조회
+            String accessToken = authorization.substring(7); 
+    
+            // 액세스 토큰을 사용하여 사용자 정보를 조회
             User user = userService.getUserInfoFromAccessToken(accessToken);
-
+    
+            // 액세스 토큰이 만료되었거나 유효하지 않은 경우 재로그인 요청
             if (user == null) {
-                // 액세스 토큰이 만료되었으면 리프레시 토큰으로 새 액세스 토큰 발급
-                String refreshToken = userService.getRefreshTokenByUserId(user.getId());
-                String newAccessToken = userService.refreshAccessToken(refreshToken);
-
-                if (newAccessToken != null) {
-                    // 새 액세스 토큰을 응답에 포함시켜 전달
-                    return ResponseEntity.ok(newAccessToken);
-                } else {
-                    // 리프레시 토큰도 만료되었으면 재로그인 요청
-                    return ResponseEntity.status(401).body("Re-login required");
-                }
+                return ResponseEntity.status(401).body("Access token expired. Re-login required.");
             }
-
+    
             // 유저 정보 반환
             UserDTO userDTO = userService.getUserProfile(user.getEmail());
             return ResponseEntity.ok(userDTO);
+    
         } catch (Exception e) {
-            // 액세스 토큰을 통한 사용자 정보 조회 실패
+            // 예외 처리
             return ResponseEntity.status(500).body("Internal Server Error");
         }
     }
+
 
     @PostMapping("/bookmark/notice")
     public ResponseEntity<?> addOrRemoveBookmark(@RequestHeader("Authorization") String authorization,
